@@ -1,0 +1,13 @@
+#!/usr/bin/env lua
+
+local script = arg[0] or "./riema"
+local root = script:match("^(.*)[/\\][^/\\]+$") or "."
+
+package.path = table.concat({
+  root .. "/lua/?.lua",
+  root .. "/lua/?/init.lua",
+  package.path,
+}, ";")
+
+local cli = require("riema.cli")
+os.exit(cli.main(arg))

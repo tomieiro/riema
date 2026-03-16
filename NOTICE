@@ -1,0 +1,12 @@
+Riema Attribution Notice
+
+Riema is an original pure-Lua environment manager implementation.
+
+Riema is inspired by the Hererocks project and follows the general problem
+space pioneered by that tool: building isolated Lua and LuaRocks environments.
+
+Hererocks was created by Peter Melnichenko and distributed under the MIT
+license. Copyright (c) Peter Melnichenko
+
+Riema does not reuse the Hererocks Python implementation. This repository is a
+clean Lua rewrite with its own command structure, data model, and source code.
