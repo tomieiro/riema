@@ -1,7 +1,10 @@
 #!/usr/bin/env lua
 
-local script = arg[0] or "./riema"
-local root = script:match("^(.*)[/\\][^/\\]+$") or "."
+local root = os.getenv("RIEMA_ROOT")
+if not root or root == "" then
+  local script = arg[0] or "./riema"
+  root = script:match("^(.*)[/\\][^/\\]+$") or "."
+end
 
 package.path = table.concat({
   root .. "/lua/?.lua",
