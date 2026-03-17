@@ -49,7 +49,15 @@ local function make_fixtures(root)
   local runtime_root = fs.join(build_root, "runtime")
   fs.mkdir_p(runtime_root)
   assert_truthy(fs.write_file(fs.join(runtime_root, "lua54"), [[#!/bin/sh
-printf '%s' "${RIEMA_ENV_NAME}|${LUAROCKS_CONFIG}"
+if [ "$1" = "-e" ] && printf '%s' "$2" | grep -q 'require("inspect")'; then
+  if [ -f "$RIEMA_ENV_PREFIX/share/lua/5.4/inspect.lua" ] && [ -n "$LUA_PATH" ] && [ -n "$LUA_CPATH" ]; then
+    printf 'inspect-ok'
+    exit 0
+  fi
+  printf 'inspect-missing' >&2
+  exit 1
+fi
+printf '%s' "${RIEMA_ENV_NAME}|${LUAROCKS_CONFIG}|${LUA_PATH}|${LUA_CPATH}"
 ]]), "write fake lua")
   assert_truthy(fs.write_file(fs.join(runtime_root, "luac54"), [[#!/bin/sh
 printf 'luac'
@@ -71,7 +79,51 @@ printf 'luac'
   local rocks_root = fs.join(build_root, "luarocks-3.12.2-linux-x86_64")
   fs.mkdir_p(rocks_root)
   assert_truthy(fs.write_file(fs.join(rocks_root, "luarocks"), [[#!/bin/sh
-printf 'luarocks'
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --*)
+      shift
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+cmd="$1"
+shift
+prefix=$(CDPATH= cd "$(dirname "$LUAROCKS_CONFIG")/../.." && pwd)
+log="$prefix/metadata/luarocks.log"
+installed="$prefix/metadata/installed-rocks.txt"
+mkdir -p "$prefix/metadata"
+case "$cmd" in
+  install)
+    mkdir -p "$prefix/share/lua/5.4" "$prefix/lib/lua/5.4" "$prefix/lib/luarocks/rocks-5.4"
+    for pkg in "$@"; do
+      printf 'install %s\n' "$pkg" >> "$log"
+      printf '%s\n' "$pkg" >> "$installed"
+      printf 'return { name = "%s" }\n' "$pkg" > "$prefix/share/lua/5.4/$pkg.lua"
+    done
+    ;;
+  remove)
+    for pkg in "$@"; do
+      printf 'remove %s\n' "$pkg" >> "$log"
+      if [ -f "$installed" ]; then
+        tmp="$installed.tmp"
+        grep -vx "$pkg" "$installed" > "$tmp" || true
+        mv "$tmp" "$installed"
+      fi
+      rm -f "$prefix/share/lua/5.4/$pkg.lua" "$prefix/lib/lua/5.4/$pkg.so"
+    done
+    ;;
+  list)
+    if [ -f "$installed" ]; then
+      cat "$installed"
+    fi
+    ;;
+  *)
+    printf '%s\n' "$cmd" >> "$log"
+    ;;
+esac
 ]]), "write fake luarocks")
   assert_truthy(fs.write_file(fs.join(rocks_root, "luarocks-admin"), [[#!/bin/sh
 printf 'luarocks-admin'
@@ -122,14 +174,22 @@ assert_truthy(fs.exists(fs.join(root, "pkgs", "luarocks", "3.12.2", "linux-x86_6
 local activate_script = assert(fs.read_file(fs.join(metadata.prefix, "bin", "activate")))
 assert_truthy(activate_script:match("%(dev::5%.4%.8%)"), "activate prefixes prompt")
 assert_truthy(activate_script:match("RIEMA_OLD_PS1"), "activate stores previous prompt")
+assert_truthy(activate_script:match("LUA_PATH"), "activate exports LUA_PATH")
+assert_truthy(activate_script:match("LUA_CPATH"), "activate exports LUA_CPATH")
 
 local loaded = environment.load(metadata.prefix)
 assert_equal(loaded.luarocks.version, "3.12.2", "stored luarocks version")
 assert_equal(#registry:list(), 1, "registry entry count")
+assert_equal(loaded.packages.installed[1], "busted", "create installs first package")
+assert_equal(loaded.packages.installed[2], "luasocket", "create installs second package")
+local install_log = assert(fs.read_file(fs.join(metadata.prefix, "metadata", "luarocks.log")))
+assert_truthy(install_log:match("install busted"), "luarocks installs busted")
+assert_truthy(install_log:match("install luasocket"), "luarocks installs luasocket")
 
-environment.add_packages(loaded, { "inspect" })
+environment.install_packages(loaded, { "inspect" })
 local updated = environment.load(metadata.prefix)
 assert_truthy(updated.packages.desired[2] == "inspect" or updated.packages.desired[3] == "inspect", "package recorded")
+assert_truthy(updated.packages.installed[2] == "inspect" or updated.packages.installed[3] == "inspect", "package installed")
 
 local exported = yaml.dump({
   name = "dev",
@@ -163,6 +223,9 @@ local env_prefix = string.format(
 local ok_create, create_output = run_capture(string.format("%s ./riema env create -f %s", env_prefix, fs.shell_quote(env_file)))
 assert_truthy(ok_create, create_output)
 assert_truthy(create_output:match("created file%-env from"), "env create output")
+local file_env = environment.load(fs.join(root, "envs", "file-env"))
+assert_equal(file_env.packages.installed[1], "inspect", "yaml create installs inspect")
+assert_equal(file_env.packages.installed[2], "penlight", "yaml create installs penlight")
 
 local ok_cli_create, cli_create_output = run_capture(string.format(
   "%s ./riema create env --name cli-env lua=5.4 luarocks=3.12",
@@ -231,6 +294,8 @@ local ok_bash_activate, bash_activate_output = run_capture(string.format(
 assert_truthy(ok_bash_activate, bash_activate_output)
 assert_truthy(bash_activate_output:match("PS1=%(dev::5%.4%.8%)"), "init wrapper updates PS1")
 assert_truthy(bash_activate_output:match("dev|"), "init wrapper activates env lua")
+assert_truthy(bash_activate_output:match("/share/lua/5%.4/%?%.lua"), "init wrapper exports LUA_PATH")
+assert_truthy(bash_activate_output:match("/lib/lua/5%.4/%?%.so"), "init wrapper exports LUA_CPATH")
 
 local ok_deactivate_fail, deactivate_fail_output = run_capture(string.format("%s ./riema deactivate", env_prefix))
 assert_truthy(not ok_deactivate_fail, "deactivate should fail when no env is active")
@@ -244,12 +309,34 @@ local ok_deactivate, deactivate_output = run_capture(string.format(
 assert_truthy(ok_deactivate, deactivate_output)
 assert_truthy(deactivate_output:match("deactivate%-riema"), "deactivate emits shell command")
 
+local ok_install, install_output = run_capture(string.format("%s ./riema install dev penlight", env_prefix))
+assert_truthy(ok_install, install_output)
+assert_truthy(install_output:match("installed packages for dev"), "install command output")
+local after_install = environment.load(metadata.prefix)
+assert_truthy(after_install.packages.installed[3] == "penlight" or after_install.packages.installed[4] == "penlight", "install command installs package")
+
 local ok_run, run_output = run_capture(string.format(
   "%s ./riema run dev lua -e ignored",
   env_prefix
 ))
 assert_truthy(ok_run, run_output)
 assert_truthy(run_output:match("^dev|"), "run exports environment")
+assert_truthy(run_output:match("/share/lua/5%.4/%?%.lua"), "run exports LUA_PATH")
+assert_truthy(run_output:match("/lib/lua/5%.4/%?%.so"), "run exports LUA_CPATH")
+
+local ok_run_require, run_require_output = run_capture(string.format(
+  "%s ./riema run dev lua -e 'require(\"inspect\")'",
+  env_prefix
+))
+assert_truthy(ok_run_require, run_require_output)
+assert_truthy(run_require_output:match("inspect%-ok"), "run resolves installed LuaRocks package")
+
+local ok_run_luarocks, run_luarocks_output = run_capture(string.format(
+  "%s ./riema run dev luarocks list",
+  env_prefix
+))
+assert_truthy(ok_run_luarocks, run_luarocks_output)
+assert_truthy(run_luarocks_output:match("inspect"), "run luarocks list works inside env")
 
 local ok_export, export_output = run_capture(string.format("%s ./riema env export file-env", env_prefix))
 assert_truthy(ok_export, export_output)
@@ -259,6 +346,7 @@ local ok_info, info_output = run_capture(string.format("%s ./riema info dev", en
 assert_truthy(ok_info, info_output)
 assert_truthy(info_output:match("runtime_store: "), "info shows runtime store")
 assert_truthy(info_output:match("luarocks_store: "), "info shows luarocks store")
+assert_truthy(info_output:match("installed_packages: "), "info shows installed packages")
 
 environment.remove(registry, "dev")
 assert_equal(#registry:list(), 2, "registry count after remove")

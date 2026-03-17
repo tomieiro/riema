@@ -319,6 +319,7 @@ local function command_info(argv)
   end
   print("created_at: " .. metadata.created_at)
   print("packages: " .. table.concat(metadata.packages.desired, ", "))
+  print("installed_packages: " .. table.concat(metadata.packages.installed or {}, ", "))
   return 0
 end
 
@@ -372,8 +373,8 @@ local function command_install(argv)
   end
 
   local metadata = load_metadata_by_name(name)
-  environment.add_packages(metadata, argv)
-  print("recorded packages for " .. name)
+  environment.install_packages(metadata, argv)
+  print("installed packages for " .. name)
   return 0
 end
 
@@ -388,8 +389,8 @@ local function command_uninstall(argv)
   end
 
   local metadata = load_metadata_by_name(name)
-  environment.remove_packages(metadata, argv)
-  print("updated packages for " .. name)
+  environment.uninstall_packages(metadata, argv)
+  print("removed packages for " .. name)
   return 0
 end
 

@@ -200,8 +200,8 @@ local function populate_runtime_store(store_dir, extracted, runtime_version)
 end
 
 local function install_luarocks_from_store(store_dir, prefix)
-  copy_and_chmod(fs.join(store_dir, "bin", "luarocks"), fs.join(prefix, "bin", "luarocks"))
-  copy_and_chmod(fs.join(store_dir, "bin", "luarocks-admin"), fs.join(prefix, "bin", "luarocks-admin"))
+  copy_and_chmod(fs.join(store_dir, "bin", "luarocks"), fs.join(prefix, "bin", "luarocks-real"))
+  copy_and_chmod(fs.join(store_dir, "bin", "luarocks-admin"), fs.join(prefix, "bin", "luarocks-admin-real"))
 end
 
 local function populate_luarocks_store(store_dir, extracted, version)

@@ -66,6 +66,10 @@ packages:
   - luasocket
 ```
 
+Running `riema env create -f env.yml` installs the listed `packages` through the
+environment-local `luarocks` binary after the runtime and LuaRocks binaries are
+prepared.
+
 ## Layout
 
 - `riema`: CLI entrypoint
